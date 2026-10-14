@@ -67,7 +67,7 @@
     <div class="results-heading" id="results-heading"><h2 id="result-count">Loading opportunities…</h2><p>Minimum fit 70/100 · daily source refresh</p></div>
     <p class="review-note" id="review-note">Only actionable roles appear in Search. Ratings below 70 and ineligible roles live only in Archived; unrated roles wait for a rating.</p>
     <div class="job-list" id="jobs"></div>
-    <footer class="footer"><span>428 target roles · 6,159 source listings</span><span>Rated 2026-10-13, 1:47:45 p.m. · gpt-5.6-luna · omar-rater-v2.3</span></footer>
+    <footer class="footer"><span>428 target roles · 6,159 source listings</span><span>Rated 2026-10-13, 5:47:45 p.m. · gpt-5.6-luna · omar-rater-v2.3</span></footer>
   </main>
 </div>
 <script>
@@ -172,9 +172,10 @@ async function openPreparationReport(key){
 }
 async function refreshPreparation(){
  const result=await preparationAPI('/api/status');preparationJobs=result.requests||[];
- requestedKeys=new Set(preparationJobs.filter(j=>(j.keys||[]).some(k=>!['ready','blocked','archived','submitted','unavailable'].includes(j.results?.[k]?.state))).flatMap(j=>(j.keys||[]).filter(k=>!['ready','blocked','archived','submitted','unavailable'].includes(j.results?.[k]?.state))));
+ requestedKeys=new Set(preparationJobs.filter(j=>(j.keys||[]).some(k=>['pending','running'].includes(j.results?.[k]?.state||'pending'))).flatMap(j=>(j.keys||[]).filter(k=>['pending','running'].includes(j.results?.[k]?.state||'pending'))));
+ if(result.ownerSubmissionCorrectionAt)APPLICATION_STATUS.ownerSubmissionCorrectionAt=result.ownerSubmissionCorrectionAt;
  if(result.records){APPLICATIONS.splice(0,APPLICATIONS.length,...result.records);reconcilePipeline()}
- const pending=preparationJobs.filter(j=>(j.keys||[]).some(k=>!['ready','blocked','archived','submitted','unavailable'].includes(j.results?.[k]?.state)));
+ const pending=preparationJobs.filter(j=>(j.keys||[]).some(k=>['pending','running'].includes(j.results?.[k]?.state||'pending')));
  $('#preparation-progress').textContent=pending.length?pending.length+' preparation request'+(pending.length===1?'':'s')+' waiting for your Codex invocation.':'No pending application requests.';render();
 }
 $('#prepare-shortlist').onclick=()=>enqueuePreparation('roles',selectedShortlist());

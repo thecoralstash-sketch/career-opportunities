@@ -62,6 +62,7 @@ if(location.hostname?.endsWith('.netlify.app')){
    const terminal=new Set((typeof APPLICATIONS!=='undefined'?APPLICATIONS:[]).filter(r=>['ready','blocked','submitted','archived'].includes(r.stage)).map(r=>r.key));
    requestedKeys=new Set(result.requests.flatMap(r=>r.keys).filter(k=>!terminal.has(k)));
   }
+  if(collection==='roles'&&globalThis.applicationWorkspaceUI)await globalThis.applicationWorkspaceUI.refreshShortlist();
   saveWorkflow();render();message.textContent='Shared changes are saved online and available to your other chats.';
  }
  async function connectCode(code){await cloudAPI('login',{code});await cloudRefresh();}

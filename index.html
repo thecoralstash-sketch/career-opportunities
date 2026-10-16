@@ -250,7 +250,7 @@ if(location.hostname?.endsWith('.netlify.app')){
  const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,char=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[char]);
  const text=value=>typeof value==='string'?value.trim():'';
  const list=value=>Array.isArray(value)?value:[];
- const safeChatUrl=value=>/^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(value))?text(value):'';
+ const safeChatUrl=value=>/^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(value))?text(value):'';
  const safeDocumentUrl=(application,id,value)=>{
   if(!/^[a-f0-9]{32}$/i.test(text(application))||!/^[a-f0-9]{32}$/i.test(text(id)))return '';
   const expected='/api/control/document?application='+encodeURIComponent(text(application))+'&document='+encodeURIComponent(text(id));
@@ -287,14 +287,14 @@ if(location.hostname?.endsWith('.netlify.app')){
   const docs=list(app.documents).map(doc=>{
    const documentId=text(doc?.id), href=safeDocumentUrl(id,documentId,doc?.downloadUrl);
    const link=href?'<a href="'+escapeHTML(href)+'">Download</a>':'<span class="aws-muted">Download unavailable</span>';
-   return '<li><strong>'+escapeHTML(text(doc?.name)||'Unnamed document')+'</strong> · '+(doc?.reviewed?'Reviewed':'Not reviewed')+' · '+escapeHTML(documentDelivery(doc))+bad('SHA-256',text(doc?.sha256)||'not supplied')+' · '+link+'</li>';
+   return '<li><strong>'+escapeHTML(text(doc?.name)||'Unnamed document')+'</strong> · '+(doc?.reviewed?'Reviewed':'Not reviewed')+' · '+escapeHTML(documentDelivery(doc))+' · '+link+'<details><summary>Document revision</summary>'+bad('SHA-256',text(doc?.sha256)||'not supplied')+'</details></li>';
   }).join('');
   const chat=(label,url)=>url?'<a class="aws-link" href="'+escapeHTML(url)+'">'+escapeHTML(label)+'</a>':'';
   const owner=safeChatUrl(app.ownerChatUrl), reviewer=safeChatUrl(app.reviewChatUrl);
   return '<article class="aws-card"><div class="aws-card-head"><div><h3>'+escapeHTML(name)+'</h3><p>'+escapeHTML(status(app.state))+' · '+(readyForSubmission(app)?'Ready for your final submission review':'Not ready for submission')+'</p></div><div>'+chat('Owner chat',owner)+chat('Independent review',reviewer)+'</div></div>'+
    '<div class="aws-grid"><section><h4>Form</h4><p>'+escapeHTML(status(form.state))+(text(form.detail)?' · '+escapeHTML(text(form.detail)):'')+(stamp(form.observedAt)?' · last observed '+escapeHTML(stamp(form.observedAt)):' · last observed unknown')+'</p><p>'+escapeHTML(metric(metrics.formVerified,'verified'))+'/'+escapeHTML(metric(metrics.formTotal,'total'))+' controls · '+escapeHTML(metric(metrics.requiredMissing,'required missing'))+' · '+escapeHTML(metric(metrics.unseenStages,'unseen stages'))+'</p></section>'+
    '<section><h4>Independent review</h4><p>'+escapeHTML(status(review.decision))+(review.current===true?' · current':' · stale')+(number(review.contentScore)!==null?' · score '+escapeHTML(String(review.contentScore)):'')+'</p>'+(text(review.rationale)?'<p>'+escapeHTML(text(review.rationale))+'</p>':'')+(text(review.validationError)?'<p class="aws-bad">Validation error: '+escapeHTML(text(review.validationError))+'</p>':'')+(findings?'<ul>'+findings+'</ul>':'<p class="aws-muted">No findings provided.</p>')+'</section></div>'+
-   (gates?'<section><h4>Owner gates</h4><ul>'+gates+'</ul></section>':'')+(actions?'<section><h4>Remaining actions</h4><ul>'+actions+'</ul></section>':'')+(gaps?'<section><h4>Gaps</h4><ul>'+gaps+'</ul></section>':'')+(assumptions?'<section><h4>Assumptions / inferred answers</h4><ul>'+assumptions+'</ul></section>':'')+(docs?'<section><h4>Documents</h4><ul>'+docs+'</ul></section>':'')+'</article>';
+   (gates?'<section><h4>Your next steps</h4><ul>'+gates+'</ul></section>':'')+(actions?'<section><h4>Remaining actions</h4><ul>'+actions+'</ul></section>':'')+(gaps?'<section><h4>Gaps</h4><ul>'+gaps+'</ul></section>':'')+(assumptions?'<section><h4>Assumptions / inferred answers</h4><ul>'+assumptions+'</ul></section>':'')+(docs?'<section><h4>Documents</h4><ul>'+docs+'</ul></section>':'')+'</article>';
  }
  function renderWorkspace(payload){
   const data=payload&&typeof payload==='object'?payload:{};
@@ -304,7 +304,7 @@ if(location.hostname?.endsWith('.netlify.app')){
   const workerStale=Number.isFinite(lastSeenMs)&&Date.now()-lastSeenMs>10*60*1000;
   const publishedStale=Number.isFinite(publishedMs)&&Date.now()-publishedMs>10*60*1000;
   const workerLine='Worker: '+(workerStale?'sync stale':status(worker.state))+(text(worker.detail)?' · '+text(worker.detail):'')+(lastSeen?' · last seen '+lastSeen:' · last seen unknown');
-  const coordinationLine='Coordination: '+status(coordination.state)+(publishedStale?' · sync stale':'')+(text(coordination.reason)?' · '+text(coordination.reason):'')+(text(coordination.mode)?' · '+text(coordination.mode):'')+(text(coordination.runId)?' · run '+text(coordination.runId):'')+(published?' · published '+published:' · published unknown');
+  const coordinationLine='Application queue: '+(coordination.state==='held'?'paused':status(coordination.state))+(publishedStale?' · sync stale':'')+(text(coordination.reason)?' · '+text(coordination.reason):'')+(published?' · updated '+published:' · update time unknown');
   const apps=list(data.applications).map(renderApplication).join('')||'<p class="aws-muted">No application workspace records are available yet.</p>';
   return '<div class="aws-status"><p>'+escapeHTML(workerLine)+'</p><p>'+escapeHTML(coordinationLine)+'</p><p>Forms are prepared in the native flow and independently reviewed. A held run, offline worker, or stale review needs attention in its owner chat. Restart survival is unverified; open the owning chat before using a retained form.</p></div><div class="aws-results">'+apps+'</div>';
  }

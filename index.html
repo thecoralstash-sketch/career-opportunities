@@ -243,4 +243,85 @@ if(location.hostname?.endsWith('.netlify.app')){
  }).catch(()=>{});
 }
 
+// Read-only shared application workspace for the authenticated Netlify roles dashboard.
+// This intentionally contains no credential, mutation, or browser-form persistence.
+(()=>{
+ 'use strict';
+ const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,char=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[char]);
+ const text=value=>typeof value==='string'?value.trim():'';
+ const list=value=>Array.isArray(value)?value:[];
+ const safeChatUrl=value=>/^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(value))?text(value):'';
+ const safeDocumentUrl=(application,id,value)=>{
+  if(!/^[a-f0-9]{32}$/i.test(text(application))||!/^[a-f0-9]{32}$/i.test(text(id)))return '';
+  const expected='/api/control/document?application='+encodeURIComponent(text(application))+'&document='+encodeURIComponent(text(id));
+  return text(value)===expected?expected:'';
+ };
+ const stamp=value=>{const date=new Date(text(value));return Number.isFinite(date.getTime())?date.toLocaleString():''};
+ const status=value=>text(value).replace(/[_-]+/g,' ')||'Unknown';
+ const number=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
+ const metric=(value,label)=>number(value)===null?'Unknown '+label:String(value);
+ const readyForSubmission=app=>{
+  const review=app?.review&&typeof app.review==='object'?app.review:{};
+  const metrics=app?.metrics&&typeof app.metrics==='object'?app.metrics:{};
+  const decision=text(review.decision).toLowerCase();
+  return app?.submissionReady===true&&text(app?.state).toLowerCase()==='ready'&&decision==='accepted-complete'&&review.current===true&&number(metrics.formVerified)!==null&&number(metrics.formTotal)!==null&&metrics.formTotal>0&&metrics.formVerified===metrics.formTotal&&number(metrics.requiredMissing)===0&&number(metrics.unseenStages)===0&&list(app?.ownerGates).length===0;
+ };
+ const bad=(label,value)=>value?'<span class="aws-bad">'+escapeHTML(label)+': '+escapeHTML(value)+'</span>':'';
+ const documentDelivery=doc=>{
+  const upload=text(doc?.uploadState).toLowerCase().replace(/[_\s-]+/g,'');
+  if(upload==='uploaded')return 'Uploaded';
+  if(doc?.deliveryRequired===true)return 'Manual upload required';
+  return 'Local only';
+ };
+ function renderApplication(item){
+  const app=item&&typeof item==='object'?item:{};
+  const id=text(app.id), name=[text(app.employer),text(app.title)].filter(Boolean).join(' · ')||'Unnamed application';
+  const review=app.review&&typeof app.review==='object'?app.review:{};
+  const metrics=app.metrics&&typeof app.metrics==='object'?app.metrics:{};
+  const form=app.form&&typeof app.form==='object'?app.form:{};
+  const gates=list(app.ownerGates).map(g=>'<li>'+escapeHTML(typeof g==='string'?g:[text(g?.name),text(g?.action),text(g?.status)].filter(Boolean).join(' · ')||text(g?.detail)||text(g?.label))+'</li>').join('');
+  const actions=list(app.remainingActions).map(action=>'<li>'+escapeHTML(typeof action==='string'?action:text(action?.detail)||text(action?.label))+'</li>').join('');
+  const findings=list(review.findings).map(finding=>'<li>'+escapeHTML(typeof finding==='string'?finding:text(finding?.detail)||text(finding?.message)||text(finding?.label))+'</li>').join('');
+  const gaps=list(app.gaps).map(gap=>'<li>'+escapeHTML(typeof gap==='string'?gap:text(gap?.detail)||text(gap?.label))+'</li>').join('');
+  const assumptions=list(app.assumptions).map(assumption=>'<li>'+escapeHTML(assumption)+'</li>').join('');
+  const docs=list(app.documents).map(doc=>{
+   const documentId=text(doc?.id), href=safeDocumentUrl(id,documentId,doc?.downloadUrl);
+   const link=href?'<a href="'+escapeHTML(href)+'">Download</a>':'<span class="aws-muted">Download unavailable</span>';
+   return '<li><strong>'+escapeHTML(text(doc?.name)||'Unnamed document')+'</strong> · '+(doc?.reviewed?'Reviewed':'Not reviewed')+' · '+escapeHTML(documentDelivery(doc))+bad('SHA-256',text(doc?.sha256)||'not supplied')+' · '+link+'</li>';
+  }).join('');
+  const chat=(label,url)=>url?'<a class="aws-link" href="'+escapeHTML(url)+'">'+escapeHTML(label)+'</a>':'';
+  const owner=safeChatUrl(app.ownerChatUrl), reviewer=safeChatUrl(app.reviewChatUrl);
+  return '<article class="aws-card"><div class="aws-card-head"><div><h3>'+escapeHTML(name)+'</h3><p>'+escapeHTML(status(app.state))+' · '+(readyForSubmission(app)?'Ready for your final submission review':'Not ready for submission')+'</p></div><div>'+chat('Owner chat',owner)+chat('Independent review',reviewer)+'</div></div>'+
+   '<div class="aws-grid"><section><h4>Form</h4><p>'+escapeHTML(status(form.state))+(text(form.detail)?' · '+escapeHTML(text(form.detail)):'')+(stamp(form.observedAt)?' · last observed '+escapeHTML(stamp(form.observedAt)):' · last observed unknown')+'</p><p>'+escapeHTML(metric(metrics.formVerified,'verified'))+'/'+escapeHTML(metric(metrics.formTotal,'total'))+' controls · '+escapeHTML(metric(metrics.requiredMissing,'required missing'))+' · '+escapeHTML(metric(metrics.unseenStages,'unseen stages'))+'</p></section>'+
+   '<section><h4>Independent review</h4><p>'+escapeHTML(status(review.decision))+(review.current===true?' · current':' · stale')+(number(review.contentScore)!==null?' · score '+escapeHTML(String(review.contentScore)):'')+'</p>'+(text(review.rationale)?'<p>'+escapeHTML(text(review.rationale))+'</p>':'')+(text(review.validationError)?'<p class="aws-bad">Validation error: '+escapeHTML(text(review.validationError))+'</p>':'')+(findings?'<ul>'+findings+'</ul>':'<p class="aws-muted">No findings provided.</p>')+'</section></div>'+
+   (gates?'<section><h4>Owner gates</h4><ul>'+gates+'</ul></section>':'')+(actions?'<section><h4>Remaining actions</h4><ul>'+actions+'</ul></section>':'')+(gaps?'<section><h4>Gaps</h4><ul>'+gaps+'</ul></section>':'')+(assumptions?'<section><h4>Assumptions / inferred answers</h4><ul>'+assumptions+'</ul></section>':'')+(docs?'<section><h4>Documents</h4><ul>'+docs+'</ul></section>':'')+'</article>';
+ }
+ function renderWorkspace(payload){
+  const data=payload&&typeof payload==='object'?payload:{};
+  const worker=data.worker&&typeof data.worker==='object'?data.worker:{};
+  const coordination=data.coordination&&typeof data.coordination==='object'?data.coordination:{};
+  const lastSeen=stamp(worker.lastSeenAt),lastSeenMs=Date.parse(text(worker.lastSeenAt)),published=stamp(data.publishedAt),publishedMs=Date.parse(text(data.publishedAt));
+  const workerStale=Number.isFinite(lastSeenMs)&&Date.now()-lastSeenMs>10*60*1000;
+  const publishedStale=Number.isFinite(publishedMs)&&Date.now()-publishedMs>10*60*1000;
+  const workerLine='Worker: '+(workerStale?'sync stale':status(worker.state))+(text(worker.detail)?' · '+text(worker.detail):'')+(lastSeen?' · last seen '+lastSeen:' · last seen unknown');
+  const coordinationLine='Coordination: '+status(coordination.state)+(publishedStale?' · sync stale':'')+(text(coordination.reason)?' · '+text(coordination.reason):'')+(text(coordination.mode)?' · '+text(coordination.mode):'')+(text(coordination.runId)?' · run '+text(coordination.runId):'')+(published?' · published '+published:' · published unknown');
+  const apps=list(data.applications).map(renderApplication).join('')||'<p class="aws-muted">No application workspace records are available yet.</p>';
+  return '<div class="aws-status"><p>'+escapeHTML(workerLine)+'</p><p>'+escapeHTML(coordinationLine)+'</p><p>Forms are prepared in the native flow and independently reviewed. A held run, offline worker, or stale review needs attention in its owner chat. Restart survival is unverified; open the owning chat before using a retained form.</p></div><div class="aws-results">'+apps+'</div>';
+ }
+ function install(){
+  if(!location.hostname?.endsWith('.netlify.app')||/\/hackathons(?:\.html)?\/?$/.test(location.pathname))return;
+  const header=document.querySelector('header.heading');if(!header||document.getElementById('application-workspace'))return;
+  const style=document.createElement('style');style.textContent='.aws-open{min-height:34px;padding:7px 10px;border:1px solid #b9d5d1;border-radius:9px;color:#0d5551;background:#ddecea;font-size:12px;font-weight:670}.aws-dialog{width:min(940px,calc(100vw - 28px));max-height:calc(100vh - 28px);padding:0;border:1px solid #d8dbd6;border-radius:13px;color:#17202a;background:#fbfbf8;box-shadow:0 20px 60px rgba(23,32,42,.25)}.aws-dialog::backdrop{background:rgba(23,32,42,.35)}.aws-inner{padding:18px}.aws-top{display:flex;justify-content:space-between;gap:12px;align-items:start}.aws-top h2{margin:0;font-size:20px}.aws-top p,.aws-status p,.aws-card p{margin:5px 0;color:#66717d}.aws-search{width:100%;min-height:38px;margin:14px 0;padding:8px 10px;border:1px solid #c9ceca;border-radius:8px;background:#fff}.aws-card{margin:10px 0;padding:13px;border:1px solid #d8dbd6;border-radius:10px;background:#fff}.aws-card-head{display:flex;justify-content:space-between;gap:12px}.aws-card h3,.aws-card h4{margin:0}.aws-card h4{font-size:11px}.aws-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:11px}.aws-card section{margin-top:11px}.aws-card ul{margin:5px 0;padding-left:19px}.aws-link{display:inline-block;margin-left:8px}.aws-muted{color:#66717d}.aws-bad{margin-left:4px;font-size:11px;color:#66717d;word-break:break-all}.aws-message{min-height:22px;color:#66717d}.aws-close{min-height:32px;padding:6px 9px;border:1px solid #d8dbd6;border-radius:8px;background:#fff}@media(max-width:650px){.aws-grid{grid-template-columns:1fr}.aws-card-head{display:block}.aws-link{margin:6px 8px 0 0}}';document.head.append(style);
+  const button=document.createElement('button');button.id='application-workspace';button.className='aws-open';button.type='button';button.textContent='Application workspace';
+  const actions=header.querySelector('.heading-actions');(actions||header).prepend(button);
+  const dialog=document.createElement('dialog');dialog.className='aws-dialog';dialog.innerHTML='<div class="aws-inner"><div class="aws-top"><div><h2>Application workspace</h2><p class="aws-message" role="status">Open a connected dashboard to view application records.</p></div><button class="aws-close" type="button">Close</button></div><label><span hidden>Search applications</span><input class="aws-search" type="search" placeholder="Search employer or role" autocomplete="off"></label><div class="aws-content"></div></div>';document.body.append(dialog);
+  const message=dialog.querySelector('.aws-message'), content=dialog.querySelector('.aws-content'), search=dialog.querySelector('.aws-search');let payload=null;
+  const filter=()=>{const needle=search.value.toLowerCase().trim();if(!payload)return;if(!needle){content.innerHTML=renderWorkspace(payload);return}const filtered={...payload,applications:list(payload.applications).filter(app=>(text(app?.employer)+' '+text(app?.title)).toLowerCase().includes(needle))};content.innerHTML=renderWorkspace(filtered)};
+  search.addEventListener('input',filter);dialog.querySelector('.aws-close').onclick=()=>dialog.close();
+  button.onclick=async()=>{dialog.showModal();message.textContent='Loading shared application workspace…';content.innerHTML='';try{const response=await fetch('/api/control/workspace',{credentials:'same-origin',cache:'no-store'});let result={};try{result=await response.json()}catch{}if(!response.ok)throw Error(text(result.error)||'Pair this dashboard with Codex first.');payload=result;message.textContent='Read-only pilot. Final submission still happens in the native application flow.';filter();}catch(error){message.textContent='Pair this dashboard with Codex first, then reopen Application workspace. '+text(error.message);content.innerHTML='';}};
+ }
+ globalThis.applicationWorkspaceUI={escapeHTML,safeChatUrl,safeDocumentUrl,renderApplication,renderWorkspace};
+ install();
+})();
+
 </script></body></html>

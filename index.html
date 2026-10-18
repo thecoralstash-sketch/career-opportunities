@@ -343,10 +343,12 @@ if(location.hostname?.endsWith('.netlify.app')){
  }
  // 3. Start the next batch when nothing in the current one is left to prepare.
  async function topUp(){
-  if(!shared.connected||shared.busy||members('shortlisted').length||members('prepared').length)return;
+  // The next 10 load as soon as none are left to prepare; prepared roles wait in Ready to submit meanwhile.
+  if(!shared.connected||shared.busy||members('shortlisted').length)return;
   const next=candidates().slice(0,BATCH);if(!next.length)return;
   shared.busy=true;
-  try{for(const row of next){try{await setStage(row,'shortlisted')}catch(e){/* role refused by the server (e.g. closed); the next one fills the slot on the next refresh */}}}
+  shared.topUp={at:new Date().toISOString(),tried:next.length,ok:0,errors:[]};
+  try{for(const row of next){try{await setStage(row,'shortlisted');shared.topUp.ok++}catch(e){shared.topUp.errors.push(String(e.message||e).slice(0,80)) /* refused (e.g. closed); the next one fills the slot on the next refresh */}}}
   finally{shared.busy=false}
   if(globalThis.refreshShared)globalThis.refreshShared().catch(()=>{});
  }
@@ -369,9 +371,11 @@ if(location.hostname?.endsWith('.netlify.app')){
  // The extension asks for the current batch from the data, whatever view is on screen; an empty batch is topped up first.
  if(typeof window!=='undefined'&&typeof window.addEventListener==='function')window.addEventListener('message',async event=>{
   const d=event.data;if(!d||d.omarAutofill!=='batch-request'||event.origin!==location.origin)return;
-  if(shared.connected&&!members('shortlisted').length){try{await topUp()}catch{}}
+  // Always answer from fresh shared state, so a missed refresh can never stall the run.
+  try{await load()}catch{}
+  if(shared.connected&&!members('shortlisted').length){shared.busy=false;try{await topUp()}catch(e){shared.error=String(e.message||e)}try{await load()}catch{}if(typeof render==='function')try{render()}catch{}}
   const roles=members('shortlisted').map(r=>({url:r.url||(r.urls||[])[0]||'',employer:r.employer,title:r.title,key:keyOf(r)})).filter(r=>r.url);
-  window.postMessage({omarAutofill:'batch',roles,connected:shared.connected,loaded:shared.loaded,error:shared.error||'',prepared:members('prepared').length},location.origin);
+  window.postMessage({omarAutofill:'batch',roles,connected:shared.connected,loaded:shared.loaded,error:shared.error||'',prepared:members('prepared').length,candidates:candidates().length,topUp:shared.topUp||null},location.origin);
  });
 
  // 4. Views.

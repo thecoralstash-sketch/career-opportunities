@@ -352,7 +352,7 @@ if(location.hostname?.endsWith('.netlify.app')){
  }
 
  // Runner notes: what Omar Autofill reported for each role it worked on (kept in this browser).
- const RUNNER_LABEL={filled:'Filled · submit it','no-form':'No way in found','needs-omar':'Filled · needs you','needs-account':'Account needed','no-apply':'Apply button not found','apply-ignored':'Apply did not open',timeout:'Timed out',closed:'Tab closed',stopped:'Stopped early'};
+ const RUNNER_LABEL={filled:'Filled · submit it','no-form':'No way in found',closed:'Closed','already-applied':'Already applied','needs-omar':'Filled · needs you','needs-account':'Account needed','no-apply':'Apply button not found','apply-ignored':'Apply did not open',timeout:'Timed out',closed:'Tab closed',stopped:'Stopped early'};
  function runnerNotes(){try{return JSON.parse(localStorage.getItem('omarRunnerNotes')||'{}')}catch{return {}}}
  function saveRunnerNote(key,note){try{const n=runnerNotes();n[key]=note;localStorage.setItem('omarRunnerNotes',JSON.stringify(n))}catch{}}
  const sameUrl=(a,b)=>String(a||'').split('#')[0].replace(/\/$/,'')===String(b||'').split('#')[0].replace(/\/$/,'');
@@ -360,8 +360,18 @@ if(location.hostname?.endsWith('.netlify.app')){
   const d=event.data;if(!d||d.omarAutofill!=='prepared'||event.origin!==location.origin)return;
   const row=ROWS.find(r=>sameUrl(r.url,d.role&&d.role.url)||(r.urls||[]).some(u=>sameUrl(u,d.role&&d.role.url)));if(!row)return;
   saveRunnerNote(keyOf(row),{state:d.state,detail:d.detail||'',at:new Date().toISOString()});
-  if(stageOf(row)==='shortlisted'){try{await setStage(row,'prepared')}catch(e){shared.error='Not saved: '+e.message}}
+  // The extension says where the role goes: prepared (Ready to submit), archived (closed) or applied (the site shows he already applied).
+  const target=['prepared','archived','applied'].includes(d.stage)?d.stage:'prepared';
+  if(stageOf(row)==='shortlisted'||(target!=='prepared'&&stageOf(row)==='prepared')){try{await setStage(row,target)}catch(e){shared.error='Not saved: '+e.message}}
   if(globalThis.refreshShared)await globalThis.refreshShared().catch(()=>{});else render();
+ });
+
+ // The extension asks for the current batch from the data, whatever view is on screen; an empty batch is topped up first.
+ if(typeof window!=='undefined'&&typeof window.addEventListener==='function')window.addEventListener('message',async event=>{
+  const d=event.data;if(!d||d.omarAutofill!=='batch-request'||event.origin!==location.origin)return;
+  if(shared.connected&&!members('shortlisted').length){try{await topUp()}catch{}}
+  const roles=members('shortlisted').map(r=>({url:r.url||(r.urls||[])[0]||'',employer:r.employer,title:r.title,key:keyOf(r)})).filter(r=>r.url);
+  window.postMessage({omarAutofill:'batch',roles,connected:shared.connected,loaded:shared.loaded,error:shared.error||'',prepared:members('prepared').length},location.origin);
  });
 
  // 4. Views.

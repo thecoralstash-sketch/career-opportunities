@@ -361,9 +361,11 @@ if(location.hostname?.endsWith('.netlify.app')){
  if(typeof window!=='undefined'&&typeof window.addEventListener==='function')window.addEventListener('message',async event=>{
   const d=event.data;if(!d||d.omarAutofill!=='prepared'||event.origin!==location.origin)return;
   const row=ROWS.find(r=>sameUrl(r.url,d.role&&d.role.url)||(r.urls||[]).some(u=>sameUrl(u,d.role&&d.role.url)));if(!row)return;
-  saveRunnerNote(keyOf(row),{state:d.state,detail:d.detail||'',at:new Date().toISOString()});
-  // The extension says where the role goes: prepared (Ready to submit), archived (closed) or applied (the site shows he already applied).
-  const target=['prepared','archived','applied'].includes(d.stage)?d.stage:'prepared';
+  const prev=runnerNotes()[keyOf(row)]||{};
+  saveRunnerNote(keyOf(row),{state:d.state,detail:d.detail||'',at:new Date().toISOString(),order:d.order||prev.order||0});
+  // The extension says where the role goes: prepared (Ready to submit) or archived (closed). It never marks a role
+  // applied: only Omar does, with Mark Applied.
+  const target=d.stage==='archived'?'archived':'prepared';
   if(stageOf(row)==='shortlisted'||(target!=='prepared'&&stageOf(row)==='prepared')){try{await setStage(row,target)}catch(e){shared.error='Not saved: '+e.message}}
   if(globalThis.refreshShared)await globalThis.refreshShared().catch(()=>{});else render();
  });
@@ -391,7 +393,10 @@ if(location.hostname?.endsWith('.netlify.app')){
  function section(title,count,html,empty){return '<section class="pipeline-section"><div class="pipeline-heading"><h2>'+esc(title)+'</h2><p>'+count+'</p></div><div class="workflow-list">'+(html||'<p class="review-note">'+esc(empty)+'</p>')+'</div></section>'}
 
  renderApplied=function(){
-  const todo=members('shortlisted'),ready=members('prepared');
+  // Ready to submit reads in the same order as the application tabs: the order the roles were prepared, the ones
+  // waiting for an account last.
+  const notes=runnerNotes(),rank=r=>{const n=notes[keyOf(r)]||{};return [n.state==='needs-account'?1:0,n.order||1e9];};
+  const todo=members('shortlisted'),ready=members('prepared').map((r,i)=>[r,i]).sort((a,b)=>{const x=rank(a[0]),y=rank(b[0]);return x[0]-y[0]||x[1]-y[1]||a[1]-b[1];}).map(p=>p[0]);
   const preview=!shared.connected?candidates().slice(0,BATCH):[];
   $('#result-count').textContent=todo.length+' left in this batch · '+ready.length+' ready to submit';
   $('#review-note').textContent=shared.error||'Press Resume preparation: Omar Autofill opens each role in turn, fills the form up to Submit, and moves on; the next 10 load by themselves. Filled roles move to Ready to submit. Submit each in its tab, then press Mark Applied here, or Archive if you skip it.';
@@ -402,7 +407,11 @@ if(location.hostname?.endsWith('.netlify.app')){
  function renderSubmitted(){
   const rows=ROWS.filter(appliedRow);
   const extra=(typeof APPLICATIONS!=='undefined'?APPLICATIONS:[]).filter(a=>a.stage==='submitted'&&!ROWS.some(r=>r.key===a.key)&&a.item).map(a=>({...a.item,id:a.item.id||a.key}));
-  const all=[...rows,...extra];
+  // Roles marked applied whose listing has since left the ratings (expired, filtered) stay in Applied.
+  const keys=new Set([...rows,...extra].map(keyOf));
+  const kept=Object.entries(shared.roles).filter(([k,v])=>v&&v.stage==='applied'&&!keys.has(k)).map(([k,v])=>{const local=(typeof workflow!=='undefined'&&workflow[k])||Object.values(typeof workflow!=='undefined'?workflow:{}).find(w=>w&&w.item&&w.item.key===k);return local&&local.item?{...local.item,id:local.item.id||k}:(v.item?{...v.item,id:v.item.id||k}:null);}).filter(Boolean);
+  const local=Object.values(typeof workflow!=='undefined'?workflow:{}).filter(w=>w&&w.stage==='applied'&&w.item&&!keys.has(w.item.key||w.item.id)&&!kept.some(k=>keyOf(k)===(w.item.key||w.item.id))).map(w=>({...w.item,id:w.item.id||w.item.key}));
+  const all=[...rows,...extra,...kept,...local];
   $('#result-count').textContent=all.length+' submitted';
   $('#review-note').textContent='Applications you submitted, including ones the employer portal already showed as applied.';
   $('#jobs').innerHTML=section('Applied',all.length,all.map(r=>card(r,'applied')).join(''),'Nothing marked applied yet.');
@@ -422,7 +431,18 @@ if(location.hostname?.endsWith('.netlify.app')){
   if(view==='submitted'){state.view='submitted';$('#view-title').textContent=VIEW_COPY.submitted[0];$('#view-subtitle').textContent=VIEW_COPY.submitted[1];$$('[data-view]').forEach(b=>b.setAttribute('aria-current',b.dataset.view==='submitted'?'page':'false'));renderSubmitted();}
  };
  const originalRender=render;
- render=function(){normalize();if(state.view==='submitted')return renderSubmitted();return originalRender()};
+ render=function(){normalize();if(state.view==='submitted')return renderSubmitted();const out=originalRender();addShortlistButtons();return out};
+ // Every Search card gets "Add to shortlist" next to Seen / Archive (saved to the shared list: see the click handler).
+ function addShortlistButtons(){
+  if(state.view!=='search')return;
+  let groups=[];try{groups=[...document.querySelectorAll('#jobs .queue-actions')]}catch{return}
+  for(const g of groups){
+   if(g.querySelector('[data-action="shortlist"]'))continue;
+   const any=g.querySelector('[data-id]');if(!any)return;
+   const b=document.createElement('button');b.className='small-button primary';b.dataset.action='shortlist';b.dataset.id=any.dataset.id;b.textContent='◇ Add to shortlist';
+   g.insertBefore(b,g.firstChild);
+  }
+ }
  // The retired agent runner's Start/Resume control must not be pressed from here.
  for(const el of [globalThis.preparationButton,globalThis.preparationStatus])if(el)el.hidden=true;
  globalThis.renderPreparationControl=()=>{};
@@ -430,11 +450,20 @@ if(location.hostname?.endsWith('.netlify.app')){
  // Actions on batch cards.
  let jobsEl=null;try{jobsEl=$('#jobs')}catch{}
  if(jobsEl&&typeof jobsEl.addEventListener==='function')jobsEl.addEventListener('click',async event=>{
+  // Shortlist / Applied buttons on Search cards save to the shared list too, so the role really joins the
+  // batch (it is worked in this batch, in list order) instead of bouncing back to Search.
+  const quick=event.target.closest&&event.target.closest('button[data-action="shortlist"],button[data-action="apply"]');
+  if(quick){
+   const row=ROWS.find(r=>r.id===quick.dataset.id||keyOf(r)===quick.dataset.id);if(!row)return;
+   event.stopPropagation();quick.disabled=true;
+   try{await setStage(row,quick.dataset.action==='apply'?'applied':'shortlisted');if(globalThis.refreshShared)await globalThis.refreshShared();else render();}
+   catch(e){shared.error='Not saved: '+e.message;render();}
+   return;
+  }
   const button=event.target.closest&&event.target.closest('button[data-batch]');if(!button)return;
   event.stopPropagation();
   const row=ROWS.find(r=>r.id===button.dataset.id);if(!row)return;
   const stage=button.dataset.batch;
-  if(stage==='applied'&&!confirm('Mark '+row.employer+' — '+row.title+' as submitted?'))return;
   button.disabled=true;
   try{await setStage(row,stage);if(globalThis.refreshShared)await globalThis.refreshShared();else render();}
   catch(e){shared.error='Not saved: '+e.message;render();}

@@ -376,8 +376,10 @@ if(location.hostname?.endsWith('.netlify.app')){
   // Always answer from fresh shared state, so a missed refresh can never stall the run.
   try{await load()}catch{}
   if(shared.connected&&!members('shortlisted').length){shared.busy=false;try{await topUp()}catch(e){shared.error=String(e.message||e)}try{await load()}catch{}if(typeof render==='function')try{render()}catch{}}
-  const roles=members('shortlisted').map(r=>({url:r.url||(r.urls||[])[0]||'',employer:r.employer,title:r.title,key:keyOf(r)})).filter(r=>r.url);
-  window.postMessage({omarAutofill:'batch',roles,connected:shared.connected,loaded:shared.loaded,error:shared.error||'',prepared:members('prepared').length,candidates:candidates().length,topUp:shared.topUp||null},location.origin);
+  const asRole=r=>({url:r.url||(r.urls||[])[0]||'',employer:r.employer,title:r.title,key:keyOf(r)});
+  const roles=members('shortlisted').map(asRole).filter(r=>r.url);
+  const ready=readyRows().map(asRole).filter(r=>r.url);
+  window.postMessage({omarAutofill:'batch',roles,ready,connected:shared.connected,loaded:shared.loaded,error:shared.error||'',prepared:members('prepared').length,candidates:candidates().length,topUp:shared.topUp||null},location.origin);
  });
 
  // 4. Views.
@@ -392,11 +394,15 @@ if(location.hostname?.endsWith('.netlify.app')){
  }
  function section(title,count,html,empty){return '<section class="pipeline-section"><div class="pipeline-heading"><h2>'+esc(title)+'</h2><p>'+count+'</p></div><div class="workflow-list">'+(html||'<p class="review-note">'+esc(empty)+'</p>')+'</div></section>'}
 
+ // Ready to submit in the order of the application tabs: the order the roles were prepared, account ones last.
+ function readyRows(){
+  const notes=runnerNotes(),rank=r=>{const n=notes[keyOf(r)]||{};return [n.state==='needs-account'?1:0,n.order||1e9];};
+  return members('prepared').map((r,i)=>[r,i]).sort((a,b)=>{const x=rank(a[0]),y=rank(b[0]);return x[0]-y[0]||x[1]-y[1]||a[1]-b[1];}).map(p=>p[0]);
+ }
  renderApplied=function(){
   // Ready to submit reads in the same order as the application tabs: the order the roles were prepared, the ones
   // waiting for an account last.
-  const notes=runnerNotes(),rank=r=>{const n=notes[keyOf(r)]||{};return [n.state==='needs-account'?1:0,n.order||1e9];};
-  const todo=members('shortlisted'),ready=members('prepared').map((r,i)=>[r,i]).sort((a,b)=>{const x=rank(a[0]),y=rank(b[0]);return x[0]-y[0]||x[1]-y[1]||a[1]-b[1];}).map(p=>p[0]);
+  const todo=members('shortlisted'),ready=readyRows();
   const preview=!shared.connected?candidates().slice(0,BATCH):[];
   $('#result-count').textContent=todo.length+' left in this batch · '+ready.length+' ready to submit';
   $('#review-note').textContent=shared.error||'Press Resume preparation: Omar Autofill opens each role in turn, fills the form up to Submit, and moves on; the next 10 load by themselves. Filled roles move to Ready to submit. Submit each in its tab, then press Mark Applied here, or Archive if you skip it.';

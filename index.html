@@ -443,6 +443,9 @@ if(location.hostname?.endsWith('.netlify.app')){
    g.insertBefore(b,g.firstChild);
   }
  }
+ // Whatever draws the list (the first render ran before this file loaded; filters, paging and refreshes redraw
+ // it), the button is added as soon as the cards appear.
+ try{const jobs=document.getElementById('jobs');if(jobs&&typeof MutationObserver!=='undefined')new MutationObserver(()=>addShortlistButtons()).observe(jobs,{childList:true,subtree:true});addShortlistButtons();}catch{}
  // The retired agent runner's Start/Resume control must not be pressed from here.
  for(const el of [globalThis.preparationButton,globalThis.preparationStatus])if(el)el.hidden=true;
  globalThis.renderPreparationControl=()=>{};
